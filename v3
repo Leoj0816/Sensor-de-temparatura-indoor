@@ -1,0 +1,188 @@
+#include <18F4550.h>
+#device ADC=10
+
+//==================== FUSES ====================
+#fuses XT,NOWDT,NOPROTECT,NOLVP,NODEBUG,PUT,BROWNOUT
+
+//==================== CLOCK ====================
+#use delay(clock=4000000)
+
+//==================== LIBRERÍAS ====================
+#include <Mi_LCD.c>
+#include <math.h>
+
+//==================== DEFINICIONES ====================
+#define LM35_PIN          0
+#define TEMP_ALARMA_ON    40.0
+#define TEMP_ALARMA_OFF   38.0
+
+#define LED_ALARMA        PIN_B0
+#define LED_ESTADO        PIN_B1
+
+//==================== VARIABLES GLOBALES ====================
+float temperatura = 0.0;
+float temperatura_filtrada = 0.0;
+float temp_max = -50.0;
+float temp_min = 150.0;
+
+int16 adc_promedio = 0;
+int1 alarma_activa = 0;
+
+//==================== PROTOTIPOS ====================
+void iniciar_sistema(void);
+int16 leer_adc_promediado(int8 muestras);
+float convertir_temperatura(int16 adc);
+void actualizar_temperaturas(void);
+void mostrar_lcd(void);
+void controlar_salidas(void);
+
+//====================================================
+//                    MAIN
+//====================================================
+void main()
+{
+   iniciar_sistema();
+
+   while(TRUE)
+   {
+      actualizar_temperaturas();
+
+      mostrar_lcd();
+
+      controlar_salidas();
+
+      delay_ms(500);
+   }
+}
+
+//====================================================
+//            CONFIGURACIÓN DEL SISTEMA
+//====================================================
+void iniciar_sistema(void)
+{
+   // ADC
+   setup_adc_ports(AN0);
+   setup_adc(ADC_CLOCK_INTERNAL);
+
+   // Puerto B como salida
+   set_tris_b(0x00);
+
+   output_low(LED_ALARMA);
+   output_low(LED_ESTADO);
+
+   // LCD
+   lcd_init();
+
+   // Pantalla bienvenida
+   lcd_putc("\f");
+   lcd_gotoxy(1,1);
+   printf(lcd_putc,"TERMOMETRO");
+   
+   lcd_gotoxy(1,2);
+   printf(lcd_putc,"LM35 + PIC18F4550");
+
+   delay_ms(2000);
+
+   lcd_putc("\f");
+}
+
+//====================================================
+//          LECTURA ADC CON PROMEDIO
+//====================================================
+int16 leer_adc_promediado(int8 muestras)
+{
+   int32 suma = 0;
+
+   set_adc_channel(LM35_PIN);
+   delay_us(20);
+
+   for(int8 i = 0; i < muestras; i++)
+   {
+      suma += read_adc();
+      delay_us(50);
+   }
+
+   return (int16)(suma / muestras);
+}
+
+//====================================================
+//      CONVERSIÓN ADC -> TEMPERATURA
+//====================================================
+float convertir_temperatura(int16 adc)
+{
+   float voltaje;
+   float temp;
+
+   // Conversión ADC a voltaje
+   voltaje = (adc * 5.0) / 1023.0;
+
+   // LM35 = 10mV por °C
+   temp = voltaje * 100.0;
+
+   return temp;
+}
+
+//====================================================
+//         ACTUALIZAR TEMPERATURAS
+//====================================================
+void actualizar_temperaturas(void)
+{
+   adc_promedio = leer_adc_promediado(10);
+
+   temperatura = convertir_temperatura(adc_promedio);
+
+   // Filtro simple para estabilidad visual
+   temperatura_filtrada = ((temperatura_filtrada * 0.7) + (temperatura * 0.3));
+
+   // Actualizar máximos y mínimos
+   if(temperatura_filtrada > temp_max)
+      temp_max = temperatura_filtrada;
+
+   if(temperatura_filtrada < temp_min)
+      temp_min = temperatura_filtrada;
+}
+
+//====================================================
+//              MOSTRAR EN LCD
+//====================================================
+void mostrar_lcd(void)
+{
+   lcd_gotoxy(1,1);
+   printf(lcd_putc,"Temp:%5.1f%cC ",
+          temperatura_filtrada,
+          223);
+
+   lcd_gotoxy(1,2);
+   printf(lcd_putc,"Mx:%4.1f Mn:%4.1f",
+          temp_max,
+          temp_min);
+}
+
+//====================================================
+//            CONTROL DE SALIDAS
+//====================================================
+void controlar_salidas(void)
+{
+   // Histéresis
+   if(temperatura_filtrada >= TEMP_ALARMA_ON)
+   {
+      alarma_activa = 1;
+   }
+   else if(temperatura_filtrada <= TEMP_ALARMA_OFF)
+   {
+      alarma_activa = 0;
+   }
+
+   // Control físico
+   if(alarma_activa)
+   {
+      output_high(LED_ALARMA);
+      output_toggle(LED_ESTADO); // Parpadeo
+      delay_ms(100);
+   }
+   else
+   {
+      output_low(LED_ALARMA);
+      output_low(LED_ESTADO);
+   }
+}
